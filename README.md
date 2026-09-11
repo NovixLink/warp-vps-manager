@@ -156,3 +156,7 @@ journalctl -u warp-vps-rules-update.service -n 30 --no-pager
 ```
 
 本项目使用 [MIT License](LICENSE)。
+
+## 项目协作
+
+开发与维护从 [项目背景](cowork/background.md)、[待办](cowork/todo.md) 和 [项目规则](cowork/rules.md) 开始；技术资料见 [文档索引](cowork/docs/README.md)。
