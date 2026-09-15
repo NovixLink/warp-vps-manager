@@ -24,3 +24,9 @@
 按当前任务选择[背景](cowork/background.md)、[项目规则](cowork/rules.md)、[待办](cowork/todo.md)、[技术文档](cowork/docs/README.md)和[错误记录](cowork/error/README.md)。本仓库Git中的规则与cowork是团队共享依据；根AGENTS保留核心约束，详细合同和操作在索引指向的唯一位置维护。
 
 `cowork/`保持background、rules、todo三个Markdown文件及docs、error两个目录。`localwork/`仅保存个人本机备注与证据索引，不覆盖团队规则，不进入Git或发布产物；没有本机资料时保持空目录。
+
+## Outline长期知识接入
+
+- 团队知识库入口为 [Outline](https://internal.novixlink.com)，MCP endpoint 为 `https://internal.novixlink.com/mcp`。优先使用本机已配置的相关 MCP，以个人 OAuth 或已获授权的专用 Agent 身份接入；凭据、token 与认证 URL 不写入仓库。
+- 按当前任务需要检索相关长期知识，不要求每次全库阅读。项目源码、合同和工程状态仍由本仓库既有权威维护，实时业务事实由对应系统回读；Outline 不建立第二套工程状态。
+- 已确认且可共享的长期知识发生变化时，先更新既有权威，再按已获授权的知识库写入范围同步对应 Outline 页面并回读，不为范围内的同步重复申请授权。普通查询、一次性草稿和无实质变化不新建记录；秘密、会话、私人材料及客户原始记录不进入 Outline。
