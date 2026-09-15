@@ -1,5 +1,7 @@
 # WARP VPS Manager
 
+[Outline 项目目录](https://internal.novixlink.com/doc/warp-vps-manager-Y1J4wfJX1a) · [安装入口](install.sh) · [管理程序](bin/warp-vps) · [协作资料](cowork/)
+
 **让 Google 服务走 WARP，其他目标继续使用 VPS 原生出口。**
 
 适合在 Linux VPS 上运行代理、网站或应用，希望为 Gemini、YouTube 等 Google 服务更换出口的用户。支持 Google 精准分流和全局 WARP，安装后可通过 `warp-vps` 统一管理。
