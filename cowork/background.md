@@ -5,7 +5,7 @@ WARP VPS Manager 为 Linux VPS 提供 Google 精准分流及全局 WARP，支持
 - 仓库：[mqfut123/warp-vps-manager](https://github.com/mqfut123/warp-vps-manager)，公开仓库，项目位于根目录。
 - 迁移读取基线：`96ca60a`（2026-09-05）；最近已记录版本为 [v1.4.0](https://github.com/mqfut123/warp-vps-manager/releases/tag/v1.4.0)。
 - 当前阶段：v1.4.0 本地回归、Linux CI 与 Ubuntu arm64 / WireGuard 实际验证已记录；其余实机组合见 [todo](todo.md)。
-- Outline 已上线；入口、MCP 接入与长期知识同步规则见[根 AGENTS](../AGENTS.md#outline长期知识接入)。本仓库既有文档继续维护项目权威与工程状态。
+- Outline 用于公司项目介绍、架构与跨团队协作，大版本或相关重大变化时维护；入口与同步范围见[根 AGENTS](../AGENTS.md#outline项目知识接入)。日常开发资料仍在本仓库cowork及既有文档，个人隐私与偏好留在localwork。
 
 ## 结构与边界
 

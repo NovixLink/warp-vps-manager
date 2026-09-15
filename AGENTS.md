@@ -25,8 +25,8 @@
 
 `cowork/`保持background、rules、todo三个Markdown文件及docs、error两个目录。`localwork/`仅保存个人本机备注与证据索引，不覆盖团队规则，不进入Git或发布产物；没有本机资料时保持空目录。
 
-## Outline长期知识接入
+## Outline项目知识接入
 
-- 团队知识库入口为 [Outline](https://internal.novixlink.com)，MCP endpoint 为 `https://internal.novixlink.com/mcp`。优先使用本机已配置的相关 MCP，以个人 OAuth 或已获授权的专用 Agent 身份接入；凭据、token 与认证 URL 不写入仓库。
-- 按当前任务需要检索相关长期知识，不要求每次全库阅读。项目源码、合同和工程状态仍由本仓库既有权威维护，实时业务事实由对应系统回读；Outline 不建立第二套工程状态。
-- 已确认且可共享的长期知识发生变化时，先更新既有权威，再按已获授权的知识库写入范围同步对应 Outline 页面并回读，不为范围内的同步重复申请授权。普通查询、一次性草稿和无实质变化不新建记录；秘密、会话、私人材料及客户原始记录不进入 Outline。
+- 公司知识库入口为 [Outline](https://internal.novixlink.com)，MCP endpoint 为 `https://internal.novixlink.com/mcp`。优先使用本机已配置的相关 MCP，以个人 OAuth 或已获授权的专用 Agent 身份接入；凭据、token 与认证 URL 不写入仓库。
+- 按当前任务需要阅读相关项目介绍、架构与跨团队协作资料。日常开发文档、技术合同、待办和经验仍由本仓库 `cowork/` 及既有技术文档维护；个人隐私与偏好留在被忽略的 `localwork/`，不进入公司知识库。
+- 仅在大版本更新或项目介绍、架构、跨团队协作发生重大变化时，按已获授权范围维护对应 Outline 页面并回读；保留源码与工程文档链接，不复制日常开发记录，不因普通修复、查询、草稿或经验积累自动同步。
