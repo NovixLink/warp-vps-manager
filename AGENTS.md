@@ -27,6 +27,7 @@
 
 ## Outline项目知识接入
 
+- 本项目入口：[warp-vps-manager](https://internal.novixlink.com/doc/warp-vps-managerwarp-Y1J4wfJX1a)。维护范围为该项目介绍、架构及其下插件文档；仅在内容确有需要时建立二级目录。
 - 公司知识库入口为 [Outline](https://internal.novixlink.com)，MCP endpoint 为 `https://internal.novixlink.com/mcp`。优先使用本机已配置的相关 MCP，以个人 OAuth 或已获授权的专用 Agent 身份接入；凭据、token 与认证 URL 不写入仓库。
 - 按当前任务需要阅读相关项目介绍、架构与跨团队协作资料。日常开发文档、技术合同、待办和经验仍由本仓库 `cowork/` 及既有技术文档维护；个人隐私与偏好留在被忽略的 `localwork/`，不进入公司知识库。
 - 仅在大版本更新或项目介绍、架构、跨团队协作发生重大变化时，按已获授权范围维护对应 Outline 页面并回读；保留源码与工程文档链接，不复制日常开发记录，不因普通修复、查询、草稿或经验积累自动同步。
