@@ -2489,13 +2489,13 @@ test_wgcf_fixed_binary_replaces_old_copy_atomically() {
   mkdir -p "$(dirname "$WGCF_BIN")"
   printf '%s\n' \
     '#!/usr/bin/env bash' \
-    'printf "wgcf v2.2.31\\n"' \
+    'printf "wgcf v2.2.32\\n"' \
     > "$WGCF_BIN"
   chmod 0755 "$WGCF_BIN"
   : > "$request_log"
   payload_hash="$(printf '%s\n' \
     '#!/usr/bin/env bash' \
-    'printf "wgcf v2.2.32\\n"' \
+    'printf "wgcf v2.3.0\\n"' \
     | sha256sum | awk '{ print $1 }')"
 
   curl() {
@@ -2514,15 +2514,15 @@ test_wgcf_fixed_binary_replaces_old_copy_atomically() {
     printf '%s\t%s\n' "$url" "$destination" >> "$request_log"
     if [ "${url##*/}" = 'checksums.txt' ]; then
       if [ "${WGCF_TEST_BAD_CHECKSUM:-0}" -eq 1 ]; then
-        printf '%064d  wgcf_2.2.32_linux_amd64\n' 0
+        printf '%064d  wgcf_2.3.0_linux_amd64\n' 0
       else
-        printf '%s  wgcf_2.2.32_linux_amd64\n' "$payload_hash"
+        printf '%s  wgcf_2.3.0_linux_amd64\n' "$payload_hash"
       fi
       return 0
     fi
     printf '%s\n' \
       '#!/usr/bin/env bash' \
-      'printf "wgcf v2.2.32\\n"' \
+      'printf "wgcf v2.3.0\\n"' \
       > "$destination"
     [ "${WGCF_TEST_CURL_FAIL:-0}" -eq 0 ]
   }
@@ -2530,7 +2530,7 @@ test_wgcf_fixed_binary_replaces_old_copy_atomically() {
   WGCF_TEST_CURL_FAIL=1
   output="$(install_wgcf_binary 2>&1)" || rc=$?
   assert_eq '1' "$rc" 'a failed fixed-version download must fail setup' || return 1
-  assert_eq 'wgcf v2.2.31' "$("$WGCF_BIN" --version)" \
+  assert_eq 'wgcf v2.2.32' "$("$WGCF_BIN" --version)" \
     'a partial download must not replace the existing executable' || return 1
 
   WGCF_TEST_CURL_FAIL=0
@@ -2538,7 +2538,7 @@ test_wgcf_fixed_binary_replaces_old_copy_atomically() {
   rc=0
   output="$(install_wgcf_binary 2>&1)" || rc=$?
   assert_eq '1' "$rc" 'a checksum mismatch must fail fixed-version setup' || return 1
-  assert_eq 'wgcf v2.2.31' "$("$WGCF_BIN" --version)" \
+  assert_eq 'wgcf v2.2.32' "$("$WGCF_BIN" --version)" \
     'an unverified download must not replace the existing executable' || return 1
 
   WGCF_TEST_BAD_CHECKSUM=0
@@ -2546,10 +2546,10 @@ test_wgcf_fixed_binary_replaces_old_copy_atomically() {
     fail 'the fixed wgcf version should replace an executable old copy'
     return 1
   }
-  assert_eq 'wgcf v2.2.32' "$("$WGCF_BIN" --version)" \
+  assert_eq 'wgcf v2.3.0' "$("$WGCF_BIN" --version)" \
     'the live wgcf binary must become the pinned fixed version' || return 1
   assert_contains "$(< "$request_log")" \
-    '/v2.2.32/wgcf_2.2.32_linux_amd64' \
+    '/v2.3.0/wgcf_2.3.0_linux_amd64' \
     'wgcf downloads must use the fixed release and matching asset name' || return 1
   download_target="$(awk -F '\t' '$1 ~ /linux_amd64$/ { target=$2 } END { print target }' "$request_log")"
   [ "$download_target" != "$WGCF_BIN" ] || {
@@ -11558,15 +11558,15 @@ test_wgcf_mips_and_s390x_asset_mapping() {
   uname() { printf '%s\n' "$test_arch"; }
 
   test_arch=mips
-  assert_eq 'wgcf_2.2.32_linux_mips_softfloat' "$(wgcf_asset_spec)" 'mips wgcf asset' || return 1
+  assert_eq 'wgcf_2.3.0_linux_mips_softfloat' "$(wgcf_asset_spec)" 'mips wgcf asset' || return 1
   test_arch=mipsel
-  assert_eq 'wgcf_2.2.32_linux_mipsle_softfloat' "$(wgcf_asset_spec)" 'mipsel wgcf asset' || return 1
+  assert_eq 'wgcf_2.3.0_linux_mipsle_softfloat' "$(wgcf_asset_spec)" 'mipsel wgcf asset' || return 1
   test_arch=mips64
-  assert_eq 'wgcf_2.2.32_linux_mips64_softfloat' "$(wgcf_asset_spec)" 'mips64 wgcf asset' || return 1
+  assert_eq 'wgcf_2.3.0_linux_mips64_softfloat' "$(wgcf_asset_spec)" 'mips64 wgcf asset' || return 1
   test_arch=mips64el
-  assert_eq 'wgcf_2.2.32_linux_mips64le_softfloat' "$(wgcf_asset_spec)" 'mips64el wgcf asset' || return 1
+  assert_eq 'wgcf_2.3.0_linux_mips64le_softfloat' "$(wgcf_asset_spec)" 'mips64el wgcf asset' || return 1
   test_arch=s390x
-  assert_eq 'wgcf_2.2.32_linux_s390x' "$(wgcf_asset_spec)" 's390x wgcf asset'
+  assert_eq 'wgcf_2.3.0_linux_s390x' "$(wgcf_asset_spec)" 's390x wgcf asset'
 }
 
 test_main_is_the_single_public_update_source() {
