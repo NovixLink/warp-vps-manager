@@ -85,7 +85,7 @@ WARP 对端使用 IPv4 还是 IPv6，只决定 WireGuard 加密包如何到达 C
 
 依赖完整时不会调用包管理器；缺少普通依赖时只提交未安装的软件包，不执行全局 `apt update`，也不主动清理或刷新 DNF/YUM 元数据。首次新增 Cloudflare WARP APT 源时只获取该源的索引；已有源当前没有可用候选时，安装器会提示先由用户运行 `apt update`。已安装但不完整的 Cloudflare WARP 只重装自身，其他已安装组件不会顺带升级。
 
-WireGuard 配置固定使用 `wgcf v2.2.32`，不会动态追随 GitHub `latest`。下载的官方二进制通过对应架构的官方 `checksums.txt` 校验后才会启用。
+WireGuard 配置固定使用 `wgcf v2.3.0`，不会动态追随 GitHub `latest`。下载的官方二进制通过对应架构的官方 `checksums.txt` 校验后才会启用。
 
 </details>
 
