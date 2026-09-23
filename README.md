@@ -121,9 +121,9 @@ WireGuard 配置固定使用 `wgcf v2.3.0`，不会动态追随 GitHub `latest`�
 
 `native-unlock-check` 需要 root 且仅在主动运行时检测：取原生默认接口的第一个 global IPv4，没有 IPv4 时取第一个 global IPv6；通过同一路径显示 Cloudflare Trace 返回的公网 IP 和地区，再复用现有 Gemini、YouTube Premium 判断。它不会暂停服务、修改规则或加入安装后的自动检测；结果只供参考，不影响安装、更新、重启或健康检查。
 
-`unlock-check`、安装完成检测、`change-ip` 与 `native-unlock-check` 共用相同的页面判定。每项使用首个成功的 HTTP 响应，只有传输失败时才重试一次，不合并两份成功页面。Gemini 返回 403 / 451 或受限地区时显示不可用；否则，命中两个已知正向 marker 中任意一个，或页面返回受支持地区时显示可用，其余情况显示无法确认；Gemini 地区码只参与内部判断，不在结果中展示。YouTube Premium 的三种明确不可用文案或最终重定向到 `google.cn` 域名时优先显示不可用；否则，只有 HTTP 2xx 响应包含 `premiumPurchaseButton`、`manageSubscriptionButton`、月付标记、`ad-free` 或精确的 `SPunlimited` browseId 任一信号时才显示可用。YouTube 的页面地区只用于结果说明，不作为 Premium 可用证据；单纯 HTTP 成功或普通标题也不能证明解锁。检测请求不使用环境代理、Cookie 或本地缓存。单独运行 `unlock-check` 时仍会逐项显示结果；默认作为只读诊断返回成功，增加 `--strict-exit` 后只有两项都明确可用才返回成功。
+`unlock-check`、安装完成检测、`change-ip` 与 `native-unlock-check` 共用相同的页面判定。每项使用首个成功的 HTTP 响应，只有传输失败时才重试一次，不合并两份成功页面。Gemini 返回 403 / 451 时显示不可用；HTTP 2xx 页面若有明确且不冲突的正向 marker，即使页面地区为 CHN 等受限地区也显示可用；没有正向 marker 时，受限地区显示不可用、受支持地区显示可用，其余情况显示无法确认；Gemini 地区码只参与内部判断，不在结果中展示。YouTube Premium 的三种明确不可用文案或最终重定向到 `google.cn` 域名时优先显示不可用；否则，只有 HTTP 2xx 响应包含 `premiumPurchaseButton`、`manageSubscriptionButton`、月付标记、`ad-free` 或精确的 `SPunlimited` browseId 任一信号时才显示可用。YouTube 的页面地区只用于结果说明，不作为 Premium 可用证据；单纯 HTTP 成功或普通标题也不能证明解锁。检测请求不使用环境代理、Cookie 或本地缓存。单独运行 `unlock-check` 时仍会逐项显示结果；默认作为只读诊断返回成功，增加 `--strict-exit` 后只有两项都明确可用才返回成功。
 
-安装成功后会先显示当前 WARP 公网 IPv4，再运行一次 `unlock-check --strict-exit`。两项均明确可用时直接结束；未全部通过时始终提示稍后可运行 `warp-vps change-ip`。交互安装会再询问是否立即更换，提示为 `[Y/n]`，直接回车或输入 Y / yes 会执行 `warp-vps change-ip --policy all`，其他输入或读取结束则不更换；非交互安装不读取输入，也不自动更换。IP 查询、检测或更换失败不会改变已经完成的安装结果。
+安装成功后会先显示当前 WARP 公网 IPv4，再运行一次 `unlock-check --strict-exit`。两项均明确可用时直接结束；未全部通过时始终提示稍后可运行 `warp-vps change-ip`。交互安装会再询问是否立即更换：直接回车或输入 Y / yes 会执行 `warp-vps change-ip --policy all`，输入 N / no 会执行 `warp-vps change-ip --policy any`，输入 skip 或其他内容及读取结束则不更换；非交互安装不读取输入，也不自动更换。IP 查询、检测或更换失败不会改变已经完成的安装结果。
 
 `change-ip` 保持当前 WireGuard / Socks5 模式、Google 精准 / 全局路由范围和 Socks5 端口，通过重新注册 WARP 获取新出口。执行时先显示更换前的 WARP 公网 IPv4；每次注册恢复数据面后，先显示该次更换后的实际 IPv4，再执行 Gemini 和 YouTube Premium 检测。即使该次没有达到停止条件并继续下一次，更换到的 IP 也会保留在输出中；成功或用完 10 次后会再次标明最后一轮的“最终 WARP 公网 IPv4”，不会为最终文案额外查询一次。某轮暂时无法获取 IP 时会如实显示，不沿用上一轮结果，也不阻止随后的解锁检测。
 

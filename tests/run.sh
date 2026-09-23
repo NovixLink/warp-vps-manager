@@ -6817,7 +6817,7 @@ test_gemini_fixtures() {
   }
 
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available.html" 'yes|' || return 1
-  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/china.html" 'no|' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/china.html" 'yes|' || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unavailable.html" 'no|' || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-no-region.html" 'yes|' || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-legacy-marker.html" 'yes|' || return 1
@@ -6850,9 +6850,13 @@ test_gemini_fixtures() {
   for blocked in AFG CHN RUS BLR CUB IRN PRK SYR; do
     assert_eq 'no|' \
       "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-        "45631641,null,true [1,null,null,123,456,\"${blocked}\"]")" \
-      "blocked Gemini region $blocked must veto a positive marker" || return 1
+        "[1,null,null,123,456,\"${blocked}\"]")" \
+      "blocked Gemini region $blocked without a positive page marker must remain unavailable" || return 1
   done
+  assert_eq 'no|' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
+      '45631641,null,true 45631641,null,false [1,null,null,123,456,"CHN"]')" \
+    'conflicting Gemini markers must not override a blocked region' || return 1
   for region in HKG MAC; do
     assert_eq 'yes|' \
       "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
@@ -7053,6 +7057,8 @@ test_all_unlock_entrypoints_share_current_logic() {
     'installation completion must execute the installed strict unlock command' || return 1
   assert_contains "$install_body" '"$BIN_PATH" change-ip --policy all || true' \
     'an accepted installer prompt must delegate to the installed strict rotation command' || return 1
+  assert_contains "$install_body" '"$BIN_PATH" change-ip --policy any || true' \
+    'an N installer answer must delegate to the one-service rotation policy' || return 1
   assert_contains "$command_body" 'run_unlock_checks' \
     'the public unlock command must use the shared aggregate once' || return 1
   assert_contains "$change_body" 'run_unlock_checks "$unlock_policy"' \
@@ -8144,7 +8150,9 @@ test_install_unlock_check_is_post_success_and_nonblocking() {
   assert_contains "$body" 'if [ "$INSTALL_NONINTERACTIVE" -eq 0 ] && interactive_terminal_available' \
     'only an interactive installation may read the replacement prompt' || return 1
   assert_contains "$body" "''|[Yy]|[Yy][Ee][Ss])" \
-    'empty, Y and yes must be the only accepted installer answers' || return 1
+    'empty, Y and yes must select the all-services installer policy' || return 1
+  assert_contains "$body" '[Nn]|[Nn][Oo]) "$BIN_PATH" change-ip --policy any' \
+    'N and no must select the any-service installer policy' || return 1
   assert_not_contains "$body" '输入无效' \
     'other installer answers must exit instead of starting a second prompt loop'
 }
@@ -10043,10 +10051,10 @@ test_readme_documents_change_ip_contract() {
     'README must expose the strict aggregate exit mode' || return 1
   assert_file_matches "$README_FILE" '安装成功后会先显示.*再运行一次 `unlock-check --strict-exit`' \
     'README must document the installed strict detector call' || return 1
-  assert_file_matches "$README_FILE" '提示为 `\[Y/n\]`.*回车或输入 Y / yes.*change-ip --policy all' \
-    'README must document every accepted post-install prompt answer' || return 1
-  assert_file_matches "$README_FILE" '其他输入或读取结束则不更换.*非交互安装不读取输入' \
-    'README must document declining, EOF and noninteractive installer branches' || return 1
+  assert_file_matches "$README_FILE" '回车或输入 Y / yes.*change-ip --policy all.*输入 N / no.*change-ip --policy any' \
+    'README must document both post-install rotation choices' || return 1
+  assert_file_matches "$README_FILE" '输入 skip 或其他内容及读取结束则不更换.*非交互安装不读取输入' \
+    'README must document skip, EOF and noninteractive installer branches' || return 1
   assert_file_matches "$README_FILE" '保持当前 WireGuard / Socks5 模式、Google 精准 / 全局路由范围和 Socks5 端口' \
     'README must document the persisted mode, scope and port contract' || return 1
   assert_file_matches "$README_FILE" \
@@ -10686,7 +10694,7 @@ test_main_executes_bidirectional_mode_switches() {
   INSTALL_NONINTERACTIVE=0
   prompt_tty=1
 
-  for answer_spec in 'empty:' 'Y:Y' 'y:y' 'yes:yes' 'N:N' 'n:n' 'no:no' 'other:later'; do
+  for answer_spec in 'empty:' 'Y:Y' 'y:y' 'yes:yes' 'N:N' 'n:n' 'no:no' 'skip:skip' 'other:later'; do
     post_install_answer="${answer_spec#*:}"
     post_install_read_rc=0
     events=''
@@ -10712,10 +10720,16 @@ test_main_executes_bidirectional_mode_switches() {
       "post-install branch ${answer_spec%%:*} must read exactly once" || return 1
     assert_contains "$output" 'warp-vps change-ip' \
       "post-install branch ${answer_spec%%:*} must retain the strict command hint" || return 1
+    assert_contains "$output" 'Y：两项都通过才停止；N：任一项通过就停止；skip：暂不更换' \
+      'post-install prompt must explain every choice' || return 1
     case "${answer_spec%%:*}" in
       empty|Y|y|yes)
         assert_contains "$events" 'manager:change-ip --policy all' \
           "post-install answer ${answer_spec%%:*} must start strict rotation" || return 1
+        ;;
+      N|n|no)
+        assert_contains "$events" 'manager:change-ip --policy any' \
+          "post-install answer ${answer_spec%%:*} must stop after either service passes" || return 1
         ;;
       *)
         assert_not_contains "$events" 'manager:change-ip' \

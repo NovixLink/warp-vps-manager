@@ -3182,7 +3182,11 @@ evaluate_gemini_unlock() {
 
   blocked_region="$(extract_gemini_blocked_region "$body" 2>/dev/null || true)"
   if [ -n "$blocked_region" ]; then
-    printf 'no|\n'
+    if [ "$region_status" -ne 2 ] && [ "$available" -eq 1 ] && [ "$unavailable" -eq 0 ]; then
+      printf 'yes|\n'
+    else
+      printf 'no|\n'
+    fi
     return 0
   fi
 
@@ -3718,7 +3722,7 @@ cmd_change_ip() {
 
   if [ "$policy_explicit" -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
     while true; do
-      printf '是否要求 Gemini 与 YouTube Premium 同时明确可用？[Y/n]：' >&2
+      printf '是否要求 Gemini 与 YouTube Premium 同时明确可用？[Y/n]（N：任一项可用即停止）：' >&2
       read_input unlock_choice || die "无法读取解锁条件，未更换 WARP IP"
       case "$unlock_choice" in
         ''|[Yy]|[Yy][Ee][Ss]) unlock_policy=all; break ;;

@@ -2709,10 +2709,11 @@ main() {
   fi
 
   if [ "$INSTALL_NONINTERACTIVE" -eq 0 ] && interactive_terminal_available; then
-    printf '是否现在更换 WARP IP，直到 Gemini 与 YouTube Premium 都明确可用？[Y/n]：'
+    printf '现在更换 WARP IP？[Y/n/skip]（Y：两项都通过才停止；N：任一项通过就停止；skip：暂不更换）：'
     if read_input post_install_unlock_choice; then
       case "$post_install_unlock_choice" in
         ''|[Yy]|[Yy][Ee][Ss]) "$BIN_PATH" change-ip --policy all || true ;;
+        [Nn]|[Nn][Oo]) "$BIN_PATH" change-ip --policy any || true ;;
         *) ;;
       esac
     else
