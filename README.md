@@ -1,6 +1,6 @@
 # WARP VPS Manager
 
-[Outline 项目目录](https://internal.novixlink.com/doc/warp-vps-manager-Y1J4wfJX1a) · [安装入口](install.sh) · [管理程序](bin/warp-vps) · [协作资料](cowork/)
+[安装入口](install.sh) · [管理程序](bin/warp-vps)
 
 **让 Google 服务走 WARP，其他目标继续使用 VPS 原生出口。**
 
@@ -158,7 +158,3 @@ journalctl -u warp-vps-rules-update.service -n 30 --no-pager
 ```
 
 本项目使用 [MIT License](LICENSE)。
-
-## 项目协作
-
-项目资料：[背景](cowork/background.md)、[规则](cowork/rules.md)、[待办](cowork/todo.md)和[文档索引](cowork/docs/README.md)。
