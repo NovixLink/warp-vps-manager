@@ -6091,7 +6091,7 @@ test_change_ip_unlock_policy_controls_retry_success() {
     printf 'youtube\n' >> "$event"
     round="$(grep -c '^youtube$' "$event")"
     case "$scenario:$round" in
-      gemini:*|all:1) printf 'no|页面地区：US\n' ;;
+      gemini:*|all:1) printf 'no|页面提示所在地区不提供 Premium\n' ;;
       *) printf 'yes|页面地区：US\n' ;;
     esac
   }
@@ -6802,97 +6802,153 @@ assert_unlock_response_fields() {
 evaluate_gemini_fixture() {
   local homepage_fixture="$1"
   local expected="$2"
+  local verdict_status="${3-}"
+  local verdict_target="${4-}"
   local actual
 
-  actual="$(evaluate_gemini_unlock 200 'https://gemini.google.com/' "$(cat "$homepage_fixture")")"
-  assert_eq "$expected" "$actual" "Gemini fixture $(basename "$homepage_fixture")"
+  actual="$(evaluate_gemini_unlock 200 'https://gemini.google.com/' "$(cat "$homepage_fixture")" \
+    "$verdict_status" "$verdict_target")"
+  assert_eq "$expected" "$actual" \
+    "Gemini fixture $(basename "$homepage_fixture") with verdict <${verdict_status} ${verdict_target}>"
 }
 
 test_gemini_fixtures() {
   source_without_main "$MANAGER_SCRIPT"
-  local blocked region status
+  local blocked status verdict_status verdict_target body
+  local supported_target='https://notebook.google.com/'
+  local unsupported_target='https://notebooklm.google?location=unsupported'
   declare -F evaluate_gemini_unlock >/dev/null || {
     fail 'evaluate_gemini_unlock is missing'
     return 1
   }
 
+  # Today's page version carries a region code but no experiment-flag block and is
+  # served to supported and unsupported places alike; NotebookLM's first redirect decides.
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/current-usa.html" \
+    'unknown|Google 地区判定没有响应' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/current-usa.html" \
+    'yes|' 301 "$supported_target" || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/current-usa.html" \
+    'no|Google 判定所在地区不支持' 302 "$unsupported_target" || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/current-chn.html" \
+    'no|地区受限' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/current-chn.html" \
+    'no|地区受限' 301 "$supported_target" || return 1
+
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available.html" 'yes|' || return 1
-  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/china.html" 'yes|' || return 1
-  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unavailable.html" 'no|' || return 1
+  # Retired rule: a positive marker used to outrank a blocked region (CHN showed yes).
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/china.html" 'no|地区受限' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/china.html" \
+    'no|地区受限' 301 "$supported_target" || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unavailable.html" 'no|地区受限' || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-no-region.html" 'yes|' || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-legacy-marker.html" 'yes|' || return 1
-  evaluate_gemini_fixture \
-    "${FIXTURE_DIR}/gemini/old-false-marker.html" \
-    'unknown|页面标记不能确认是否可用' || return 1
+  # Retired rule: a false-only marker used to stay unknown; it now means unavailable.
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/old-false-marker.html" \
+    'no|页面标记为不可用' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/old-false-marker.html" \
+    'no|页面标记为不可用' 301 "$supported_target" || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-duplicate-region.html" 'yes|' || return 1
-  evaluate_gemini_fixture \
-    "${FIXTURE_DIR}/gemini/available-conflicting-region.html" \
-    'unknown|地区信息冲突' || return 1
-  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unknown.html" 'unknown|页面特征不明确' || return 1
-  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/generic.html" 'unknown|页面特征不明确' || return 1
+  # Retired rule: two unblocked regions used to be an unknown conflict; regions now
+  # only detect a blocked place, so the positive marker decides.
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/available-conflicting-region.html" 'yes|' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unknown.html" \
+    'unknown|Google 地区判定没有响应' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/unknown.html" \
+    'yes|' 301 "$supported_target" || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/generic.html" \
+    'unknown|Google 地区判定没有响应' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/generic.html" \
+    'no|Google 判定所在地区不支持' 302 "$unsupported_target" || return 1
   evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/conflicting.html" 'yes|' || return 1
+  evaluate_gemini_fixture "${FIXTURE_DIR}/gemini/conflicting.html" \
+    'no|Google 判定所在地区不支持' 302 "$unsupported_target" || return 1
 
-  assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"USA"')" \
-    'the legacy supported-region form must be accepted without a marker' || return 1
-  assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '[1,null,null,123,456,"CAN"]')" \
-    'the current supported-region form must be accepted without a marker' || return 1
-  assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-      ',2,1,200,"USA" [1,null,null,123,456,"USA"]')" \
-    'duplicate region values across both encodings must remain one supported region' || return 1
-  assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-      '45631641,null,true 45631641,null,false ,2,1,200,"USA"')" \
-    'a unique supported region must outrank conflicting marker evidence' || return 1
-
-  for blocked in AFG CHN RUS BLR CUB IRN PRK SYR; do
-    assert_eq 'no|' \
-      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-        "[1,null,null,123,456,\"${blocked}\"]")" \
-      "blocked Gemini region $blocked without a positive page marker must remain unavailable" || return 1
-  done
-  assert_eq 'no|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-      '45631641,null,true 45631641,null,false [1,null,null,123,456,"CHN"]')" \
-    'conflicting Gemini markers must not override a blocked region' || return 1
-  for region in HKG MAC; do
+  for verdict_status in 301 302 303 307 308; do
     assert_eq 'yes|' \
-      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-        "[1,null,null,123,456,\"${region}\"]")" \
-      "supported Gemini region $region must be accepted" || return 1
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,\"USA\"' \
+        "$verdict_status" "$supported_target")" \
+      "a US page with a $verdict_status supported verdict must be available" || return 1
+    assert_eq 'no|Google 判定所在地区不支持' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,\"USA\"' \
+        "$verdict_status" "$unsupported_target")" \
+      "a $verdict_status unsupported verdict must be unavailable" || return 1
   done
-
-  assert_eq 'unknown|地区信息冲突' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-      ',2,1,200,"USA" [1,null,null,123,456,"CAN"] 45631641,null,true')" \
-    'different supported Gemini regions must remain unknown' || return 1
-  assert_eq 'no|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
-      ',2,1,200,"USA" [1,null,null,123,456,"AFG"] 45631641,null,true')" \
-    'a blocked region must outrank a conflicting supported region' || return 1
-  assert_eq 'unknown|页面特征不明确' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"ZZZ"')" \
-    'an unrecognized three-letter region must not become positive' || return 1
-
   assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45631641,null,true')" \
-    'the current true marker must be accepted without a region' || return 1
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '[1,null,null,123,456,"CAN"]' \
+      302 'https://NotebookLM.Google.com/notebook')" \
+    'a redirect to the NotebookLM app host must be a supported verdict' || return 1
+  for body in \
+    ',2,1,200,"USA"' \
+    '[1,null,null,123,456,"HKG"]' \
+    '45631641,null,true ,2,1,200,"USA"' \
+    'Gemini'; do
+    assert_eq 'no|Google 判定所在地区不支持' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' "$body" \
+        302 'https://notebooklm.google/?location=unsupported')" \
+      "an unsupported verdict must outrank the page: $body" || return 1
+  done
+  assert_eq 'no|页面标记为不可用' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45617354,null,false' \
+      301 "$supported_target")" \
+    'a false-only marker must outrank a supported verdict' || return 1
   assert_eq 'yes|' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45617354,null,true')" \
-    'the legacy true marker must be accepted without a region' || return 1
-  assert_eq 'unknown|页面特征冲突' \
     "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
       '45631641,null,true 45631641,null,false')" \
-    'true and false markers without a decisive region must remain unknown' || return 1
-  assert_eq 'unknown|页面标记不能确认是否可用' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45617354,null,false')" \
-    'a false-only marker must remain unknown' || return 1
+    'a negative marker counts only without a positive marker' || return 1
+  assert_eq 'yes|' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45631641,null,true')" \
+    'the current true marker must be accepted without a verdict' || return 1
+  assert_eq 'yes|' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '45617354,null,true')" \
+    'the legacy true marker must be accepted without a verdict' || return 1
+
+  for blocked in AFG CHN RUS BLR CUB IRN PRK SYR; do
+    assert_eq 'no|地区受限' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
+        "45631641,null,true [1,null,null,123,456,\"${blocked}\"]" 301 "$supported_target")" \
+      "blocked Gemini region $blocked must outrank a positive marker and a supported verdict" || return 1
+  done
+  assert_eq 'no|地区受限' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' \
+      ',2,1,200,"USA" [1,null,null,123,456,"AFG"] 45631641,null,true')" \
+    'a blocked region must outrank another unblocked region' || return 1
+
+  for body in \
+    ',2,1,200,"USA"' \
+    '[1,null,null,123,456,"HKG"]' \
+    ',2,1,200,"ZZZ"' \
+    ',2,1,200,"USA" [1,null,null,123,456,"CAN"]'; do
+    assert_eq 'unknown|Google 地区判定没有响应' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' "$body")" \
+      "an unblocked region without a verdict or marker must remain unknown: $body" || return 1
+  done
+  for verdict_status in 0 200 404; do
+    assert_eq 'unknown|Google 地区判定没有响应' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"USA"' \
+        "$verdict_status" 'https://notebooklm.google.com/')" \
+      "a non-redirect verdict $verdict_status must remain unknown" || return 1
+  done
+  assert_eq 'unknown|Google 地区判定没有响应' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"USA"' \
+      200 'https://notebooklm.google?location=unsupported')" \
+    'an unsupported target counts only on a redirect' || return 1
+  assert_eq 'unknown|Google 地区判定没有响应' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"USA"' 302 '')" \
+    'a redirect without a target must remain unknown' || return 1
+  for verdict_target in \
+    'https://accounts.google.com/ServiceLogin' \
+    'https://notebook.google.com.evil.invalid/' \
+    'https://evilnotebook.google.com/'; do
+    assert_eq 'unknown|Google 地区判定没有响应' \
+      "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' ',2,1,200,"USA"' \
+        302 "$verdict_target")" \
+      "a redirect to another host must not be a supported verdict: $verdict_target" || return 1
+  done
 
   assert_eq 'unknown|Google 风控页面' \
     "$(evaluate_gemini_unlock 200 'https://gemini.google.com/sorry/index?continue=x' \
-      '45631641,null,true ,2,1,200,"USA"')" \
+      '45631641,null,true ,2,1,200,"USA"' 301 "$supported_target")" \
     'a /sorry/ effective path must veto positive evidence' || return 1
   assert_eq 'unknown|Google 风控页面' \
     "$(evaluate_gemini_unlock 403 'https://gemini.google.com/sorry/' '45631641,null,true')" \
@@ -6902,50 +6958,54 @@ test_gemini_fixtures() {
     'a path merely beginning with sorry must not trigger the risk-page veto' || return 1
 
   for status in 403 451; do
-    assert_eq 'no|' \
+    assert_eq "no|HTTP ${status}" \
       "$(evaluate_gemini_unlock "$status" 'https://gemini.google.com/' \
-        '45631641,null,true ,2,1,200,"USA"')" \
+        '45631641,null,true ,2,1,200,"USA"' 301 "$supported_target")" \
       "Gemini HTTP $status must be explicitly unavailable" || return 1
   done
   for status in 302 429 500; do
-    assert_eq 'unknown|页面特征不明确' \
+    assert_eq 'unknown|Gemini 页面没有打开' \
       "$(evaluate_gemini_unlock "$status" 'https://gemini.google.com/' \
-        '45631641,null,true ,2,1,200,"USA"')" \
-      "Gemini HTTP $status must not accept body positives" || return 1
+        '45631641,null,true ,2,1,200,"USA"' 301 "$supported_target")" \
+      "Gemini HTTP $status must not accept body positives or the verdict" || return 1
   done
-  assert_eq 'unknown|页面特征不明确' \
-    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '')" \
+  assert_eq 'unknown|Gemini 页面没有打开' \
+    "$(evaluate_gemini_unlock 200 'https://gemini.google.com/' '' 301 "$supported_target")" \
     'an empty successful Gemini page must be distinct from a transport failure' || return 1
   assert_eq 'unknown|网络连接失败' \
-    "$(evaluate_gemini_unlock '' '' '')" \
+    "$(evaluate_gemini_unlock '' '' '' 301 "$supported_target")" \
     'a missing canonical response must remain a network failure'
 }
 
 test_unlock_probes_accept_the_first_http_response() {
   source_without_main "$MANAGER_SCRIPT"
-  local request_log output probe_name expected url first_body second_body
+  local request_log output probe_name expected url first_body second_body transport other_transport
   request_log="$(mktemp)"
 
-  curl_unlock_page() {
+  mock_unlock_page() {
     local call_count
-    printf 'curl:%s\n' "$1" >> "$request_log"
-    call_count="$(wc -l < "$request_log" | tr -d ' ')"
+    printf '%s:page:%s\n' "$1" "$2" >> "$request_log"
+    call_count="$(grep -c ':page:' "$request_log" || true)"
     if [ "$call_count" -eq 1 ]; then
-      unlock_response_fixture 200 "$1" "$first_body"
+      unlock_response_fixture 200 "$2" "$first_body"
     else
-      unlock_response_fixture 200 "$1" "$second_body"
+      unlock_response_fixture 200 "$2" "$second_body"
     fi
   }
-  native_unlock_page() {
+  mock_unlock_verdict() {
     local call_count
-    printf 'native:%s\n' "$1" >> "$request_log"
-    call_count="$(wc -l < "$request_log" | tr -d ' ')"
+    printf '%s:verdict:%s\n' "$1" "$2" >> "$request_log"
+    call_count="$(grep -c ':verdict:' "$request_log" || true)"
     if [ "$call_count" -eq 1 ]; then
-      unlock_response_fixture 200 "$1" "$first_body"
+      printf '301\thttps://notebook.google.com/'
     else
-      unlock_response_fixture 200 "$1" "$second_body"
+      printf '302\thttps://notebooklm.google?location=unsupported'
     fi
   }
+  curl_unlock_page() { mock_unlock_page curl "$1"; }
+  native_unlock_page() { mock_unlock_page native "$1"; }
+  curl_unlock_redirect() { mock_unlock_verdict curl "$1"; }
+  native_unlock_redirect() { mock_unlock_verdict native "$1"; }
 
   for probe_name in \
     probe_gemini_unlock \
@@ -6954,15 +7014,19 @@ test_unlock_probes_accept_the_first_http_response() {
     probe_native_youtube_premium_unlock; do
     : > "$request_log"
     case "$probe_name" in
+      *native*) transport=native; other_transport=curl ;;
+      *) transport=curl; other_transport=native ;;
+    esac
+    case "$probe_name" in
       *gemini*)
         url='https://gemini.google.com/'
-        first_body='45631641,null,true'
-        second_body=',2,1,200,"CHN"'
+        first_body=',2,1,200,\"USA\"'
+        second_body=',2,1,200,\"CHN\"'
         expected='yes|'
         ;;
       *)
         url='https://www.youtube.com/premium?hl=en'
-        first_body='"INNERTUBE_CONTEXT_GL":"US" ad-free'
+        first_body='"INNERTUBE_CONTEXT_GL":"US" premiumPurchaseButtonRenderer'
         second_body='Premium is not available in your country'
         expected='yes|页面地区：US'
         ;;
@@ -6970,32 +7034,55 @@ test_unlock_probes_accept_the_first_http_response() {
     output="$($probe_name)"
     assert_eq "$expected" "$output" \
       "$probe_name must evaluate its first successful HTTP response" || return 1
-    assert_eq '1' "$(wc -l < "$request_log" | tr -d ' ')" \
-      "$probe_name must not request a second successful page" || return 1
-    assert_contains "$(< "$request_log")" "$url" \
-      "$probe_name must use the canonical service URL" || return 1
+    case "$probe_name" in
+      *gemini*)
+        assert_eq \
+          "${transport}:page:${url}"$'\n'"${transport}:verdict:https://notebooklm.google.com/" \
+          "$(< "$request_log")" \
+          "$probe_name must request the page and then one verdict through the same path" || return 1
+        ;;
+      *)
+        assert_eq "${transport}:page:${url}" "$(< "$request_log")" \
+          "$probe_name must request one page and no verdict" || return 1
+        ;;
+    esac
+    assert_not_contains "$(< "$request_log")" "${other_transport}:" \
+      "$probe_name must not mix probe paths" || return 1
   done
 }
 
 test_unlock_transport_retries_only_transport_failures_once() {
   source_without_main "$MANAGER_SCRIPT"
-  local request_log probe_name mode output expected first_status url body
+  local request_log probe_name output expected url body page_status page_failures
+  local verdict_failures mock_verdict_status mock_verdict_target
   request_log="$(mktemp)"
 
-  curl_unlock_page() { mock_unlock_transport curl "$1"; }
-  native_unlock_page() { mock_unlock_transport native "$1"; }
+  curl_unlock_page() { mock_unlock_transport curl page "$1"; }
+  native_unlock_page() { mock_unlock_transport native page "$1"; }
+  curl_unlock_redirect() { mock_unlock_transport curl verdict "$1"; }
+  native_unlock_redirect() { mock_unlock_transport native verdict "$1"; }
   mock_unlock_transport() {
     local transport="$1"
-    local request_url="$2"
-    local call_count
-    printf '%s:%s\n' "$transport" "$request_url" >> "$request_log"
-    call_count="$(wc -l < "$request_log" | tr -d ' ')"
-    case "$mode:$call_count" in
-      retry:1|fail:1|fail:2) return 28 ;;
-      *) unlock_response_fixture "$first_status" "$request_url" "$body" ;;
-    esac
+    local kind="$2"
+    local request_url="$3"
+    local call_count failures
+    printf '%s:%s:%s\n' "$transport" "$kind" "$request_url" >> "$request_log"
+    call_count="$(grep -c ":${kind}:" "$request_log" || true)"
+    failures="$page_failures"
+    [ "$kind" = page ] || failures="$verdict_failures"
+    [ "$call_count" -gt "$failures" ] || return 28
+    if [ "$kind" = page ]; then
+      unlock_response_fixture "$page_status" "$request_url" "$body"
+    else
+      printf '%s\t%s' "$mock_verdict_status" "$mock_verdict_target"
+    fi
+  }
+  count_requests() {
+    grep -c ":$1:" "$request_log" || true
   }
 
+  mock_verdict_status=301
+  mock_verdict_target='https://notebook.google.com/'
   for probe_name in \
     probe_gemini_unlock \
     probe_native_gemini_unlock \
@@ -7004,45 +7091,93 @@ test_unlock_transport_retries_only_transport_failures_once() {
     case "$probe_name" in
       *gemini*)
         url='https://gemini.google.com/'
-        body='45631641,null,true'
+        body=',2,1,200,"USA"'
         expected='yes|'
         ;;
       *)
         url='https://www.youtube.com/premium?hl=en'
-        body='ad-free'
+        body='premiumPurchaseButtonRenderer'
         expected='yes|'
         ;;
     esac
 
     : > "$request_log"
-    mode=retry
-    first_status=200
+    page_status=200
+    page_failures=1
+    verdict_failures=0
     output="$($probe_name)"
     assert_eq "$expected" "$output" \
       "$probe_name must parse the response after one transport retry" || return 1
-    assert_eq '2' "$(wc -l < "$request_log" | tr -d ' ')" \
-      "$probe_name must retry one transport failure exactly once" || return 1
+    assert_eq '2' "$(count_requests page)" \
+      "$probe_name must retry one page transport failure exactly once" || return 1
+    case "$probe_name" in
+      *gemini*)
+        assert_eq '1' "$(count_requests verdict)" \
+          "$probe_name must request the verdict once after the page" || return 1
+        ;;
+      *)
+        assert_eq '0' "$(count_requests verdict)" \
+          "$probe_name must stay a single-page request" || return 1
+        ;;
+    esac
 
     : > "$request_log"
-    mode=fail
+    page_failures=2
     output="$($probe_name)"
     assert_eq 'unknown|网络连接失败' "$output" \
       "$probe_name must report two transport failures as unknown" || return 1
-    assert_eq '2' "$(wc -l < "$request_log" | tr -d ' ')" \
+    assert_eq '2' "$(count_requests page)" \
       "$probe_name must stop after two transport failures" || return 1
+    assert_eq '0' "$(count_requests verdict)" \
+      "$probe_name must not request a verdict without a page" || return 1
   done
 
+  for probe_name in probe_gemini_unlock probe_native_gemini_unlock; do
+    body=',2,1,200,"USA"'
+    page_status=200
+    page_failures=0
+
+    : > "$request_log"
+    verdict_failures=1
+    output="$($probe_name)"
+    assert_eq 'yes|' "$output" \
+      "$probe_name must use the verdict after one transport retry" || return 1
+    assert_eq '1' "$(count_requests page)" \
+      "$probe_name must not repeat the page for a verdict retry" || return 1
+    assert_eq '2' "$(count_requests verdict)" \
+      "$probe_name must retry one verdict transport failure exactly once" || return 1
+
+    : > "$request_log"
+    verdict_failures=2
+    output="$($probe_name)"
+    assert_eq 'unknown|Google 地区判定没有响应' "$output" \
+      "$probe_name must report a missing verdict as unknown" || return 1
+    assert_eq '2' "$(count_requests verdict)" \
+      "$probe_name must stop after two verdict transport failures" || return 1
+
+    : > "$request_log"
+    verdict_failures=0
+    mock_verdict_status=200
+    output="$($probe_name)"
+    assert_eq 'unknown|Google 地区判定没有响应' "$output" \
+      "$probe_name must not treat a non-redirect verdict as supported" || return 1
+    assert_eq '1' "$(count_requests verdict)" \
+      "$probe_name must not retry a verdict HTTP response" || return 1
+    mock_verdict_status=301
+  done
+
+  page_failures=0
+  verdict_failures=0
   for probe_name in probe_gemini_unlock probe_native_youtube_premium_unlock; do
     case "$probe_name" in
-      *gemini*) body='45631641,null,true'; first_status=403; expected='no|' ;;
-      *) body='ad-free'; first_status=500; expected='unknown|页面特征不明确' ;;
+      *gemini*) body='45631641,null,true'; page_status=403; expected='no|HTTP 403' ;;
+      *) body='premiumPurchaseButtonRenderer'; page_status=500; expected='unknown|Premium 页面没有打开' ;;
     esac
     : > "$request_log"
-    mode=http
     output="$($probe_name)"
     assert_eq "$expected" "$output" \
       "$probe_name must evaluate a terminal HTTP error response" || return 1
-    assert_eq '1' "$(wc -l < "$request_log" | tr -d ' ')" \
+    assert_eq '1' "$(count_requests page)" \
       "$probe_name must not retry an HTTP error response" || return 1
   done
 }
@@ -7075,13 +7210,25 @@ test_all_unlock_entrypoints_share_current_logic() {
     assert_contains "$probe_body" 'parse_unlock_response' \
       "$name must consume the same canonical response envelope" || return 1
     case "$name" in
+      *native_gemini*)
+        assert_contains "$probe_body" 'evaluate_gemini_unlock' \
+          "$name must use the shared Gemini evaluator" || return 1
+        assert_contains "$probe_body" \
+          'request_unlock_response native_unlock_redirect "https://notebooklm.google.com/"' \
+          "$name must ask for the location verdict through the native path" || return 1
+        ;;
       *gemini*)
         assert_contains "$probe_body" 'evaluate_gemini_unlock' \
           "$name must use the shared Gemini evaluator" || return 1
+        assert_contains "$probe_body" \
+          'request_unlock_response curl_unlock_redirect "https://notebooklm.google.com/"' \
+          "$name must ask for the location verdict through the WARP path" || return 1
         ;;
       *)
         assert_contains "$probe_body" 'evaluate_youtube_premium_unlock' \
           "$name must use the shared YouTube evaluator" || return 1
+        assert_not_contains "$probe_body" '_unlock_redirect' \
+          "$name must remain a single page request" || return 1
         ;;
     esac
   done
@@ -7093,8 +7240,12 @@ test_all_unlock_entrypoints_share_current_logic() {
     '45631641' \
     '45617354' \
     'premiumPurchaseButton' \
+    'lpOfferCardViewModel' \
     'SPunlimited' \
-    'Premium is not available'; do
+    'Premium is not available' \
+    'notebooklm' \
+    'notebook.google.com' \
+    'location=unsupported'; do
     assert_not_contains "$combined_entrypoints" "$name" \
       "entrypoints must not duplicate evaluator marker $name" || return 1
   done
@@ -7180,6 +7331,71 @@ test_unlock_http_transport_ignores_environment_proxies() {
     'a curl transport error must fail before producing a canonical HTTP response'
 }
 
+test_unlock_redirect_request_reports_the_first_response() {
+  source_without_main "$MANAGER_SCRIPT"
+  local request_log output response rc=0 curl_rc=0 simulated_metadata
+  request_log="$(mktemp)"
+  simulated_metadata=$'302\thttps://notebooklm.google/?location=unsupported'
+
+  curl() {
+    {
+      printf 'http_proxy=%s\n' "${http_proxy-}"
+      printf 'HTTPS_PROXY=%s\n' "${HTTPS_PROXY-}"
+      printf 'ALL_PROXY=%s\n' "${ALL_PROXY-}"
+      printf 'arg=%s\n' "$@"
+    } > "$request_log"
+    printf '%s' "$simulated_metadata"
+    return "$curl_rc"
+  }
+
+  http_proxy=http://127.0.0.1:18080 \
+    HTTPS_PROXY=http://127.0.0.1:28443 \
+    ALL_PROXY=socks5://127.0.0.1:2080 \
+    response="$(curl_unlock_redirect 'https://notebooklm.google.com/')"
+  output="$(< "$request_log")"
+  assert_eq "$simulated_metadata" "$response" \
+    'the WARP verdict request must return the first status and redirect target' || return 1
+  assert_eq 'arg=-q' "$(sed -n '4p' "$request_log")" \
+    'the verdict request must ignore user curlrc' || return 1
+  for proxy_name in http_proxy HTTPS_PROXY ALL_PROXY; do
+    assert_contains "$output" "${proxy_name}="$'\n' \
+      "the verdict request must clear ${proxy_name}" || return 1
+  done
+  for arg in '-4' '--noproxy' '*' '-sS' '-o' '/dev/null' \
+    'cache-control: no-cache' 'pragma: no-cache' \
+    $'%{http_code}\t%{redirect_url}' 'https://notebooklm.google.com/'; do
+    grep -Fxq -- "arg=${arg}" "$request_log" || {
+      fail "the verdict request is missing curl argument <${arg}>"
+      return 1
+    }
+  done
+  for arg in '-L' '-sSL' '--location' '--fail' '--cookie' '--cookie-jar'; do
+    if grep -Fxq -- "arg=${arg}" "$request_log"; then
+      fail "the verdict request must not pass curl argument <${arg}>"
+      return 1
+    fi
+  done
+
+  simulated_metadata=$'200\t'
+  response="$(curl_unlock_redirect 'https://notebooklm.google.com/')" || {
+    fail 'a non-redirect verdict must remain a successful HTTP response'
+    return 1
+  }
+  assert_eq $'200\t' "$response" \
+    'a non-redirect verdict must keep its status with an empty target' || return 1
+
+  curl_rc=28
+  rc=0
+  curl_unlock_redirect 'https://notebooklm.google.com/' >/dev/null || rc=$?
+  assert_eq '1' "$rc" 'a curl transport error must fail the verdict request' || return 1
+
+  curl_rc=0
+  simulated_metadata='garbage'
+  rc=0
+  curl_unlock_redirect 'https://notebooklm.google.com/' >/dev/null || rc=$?
+  assert_eq '1' "$rc" 'malformed curl metadata must fail the verdict request'
+}
+
 test_http_probes_ignore_user_curl_config() {
   local curl_config_dir
   curl_config_dir="$(mktemp -d)"
@@ -7207,7 +7423,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         requests.append((self.headers.get("Cookie"), self.headers.get("X-Test-Curlrc")))
         body = b"45631641,null,true"
-        self.send_response(int(self.path.strip("/")))
+        status = int(self.path.strip("/"))
+        self.send_response(status)
+        if 300 <= status < 400:
+            self.send_header("Location", "/200")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -7228,6 +7447,12 @@ with http.server.HTTPServer(("127.0.0.1", 0), Handler) as server:
             )
             assert result.returncode == 0, (status, result.stderr)
             assert result.stdout == f"{status}\t{url}\n45631641,null,true", result.stdout
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; curl_unlock_redirect "$2"', "test", manager, url],
+                env=environment, capture_output=True, text=True, timeout=15,
+            )
+            assert result.returncode == 0, (status, result.stderr)
+            assert result.stdout == f"{status}\t", result.stdout
             # Keep the production probe arguments; replace only its remote URL.
             probe = '''source "$1"
 curl() {
@@ -7243,7 +7468,15 @@ google_http_probe -4
                 capture_output=True, text=True, timeout=15,
             )
             assert result.returncode == 0, (status, result.stderr)
-        assert requests == [(None, None)] * 6, requests
+        # The verdict request reports the first redirect and must not follow it.
+        url = f"http://127.0.0.1:{server.server_port}/302"
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; curl_unlock_redirect "$2"', "test", manager, url],
+            env=environment, capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == f"302\thttp://127.0.0.1:{server.server_port}/200", result.stdout
+        assert requests == [(None, None)] * 10, requests
         assert not output_file.exists(), "curlrc must not redirect probe output"
     finally:
         server.shutdown()
@@ -7274,9 +7507,9 @@ test_unlock_check_requires_both_services() {
 
   for case_spec in \
     'yes|;yes|页面地区：US;0' \
-    'yes|;no|页面地区：US;1' \
-    'yes|;unknown|页面特征不明确;1' \
-    'no|;yes|页面地区：US;1'; do
+    'yes|;no|页面提示所在地区不提供 Premium;1' \
+    'yes|;unknown|页面没有购买选项也没有不可用提示;1' \
+    'no|地区受限;yes|页面地区：US;1'; do
     IFS=';' read -r mock_gemini_result mock_youtube_result expected_strict_rc <<< "$case_spec"
     : > "$request_log"
     actual_rc=0
@@ -7315,7 +7548,7 @@ test_unlock_policy_is_local_and_each_service_is_still_reported() {
   probe_gemini_unlock() { printf 'gemini\n' >> "$event"; printf 'yes|\n'; }
   probe_youtube_premium_unlock() {
     printf 'youtube\n' >> "$event"
-    printf 'no|页面地区：US\n'
+    printf 'no|页面提示所在地区不提供 Premium\n'
   }
 
   any_output="$(run_unlock_checks any)" || any_rc=$?
@@ -7426,41 +7659,67 @@ evaluate_youtube_fixture() {
 test_youtube_fixtures() {
   source_without_main "$MANAGER_SCRIPT"
   local fixture final_url marker negative status region_body
+  local no_offer='unknown|页面没有购买选项也没有不可用提示'
+  local not_offered='no|页面提示所在地区不提供 Premium'
   declare -F evaluate_youtube_premium_unlock >/dev/null || {
     fail 'evaluate_youtube_premium_unlock is missing'
     return 1
   }
 
+  # Today's pages: the offer structure appears only where Premium is sold; the
+  # China-located page says so and still reports YouTube's fallback US region.
   evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/available-us-google-cn.html" \
+    "${FIXTURE_DIR}/youtube/available-us-offer.html" \
     'yes|页面地区：US' || return 1
   evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/available-us-generic-adfree.html" \
-    'yes|页面地区：US' || return 1
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/available-us-premiumlite-browse.html" \
-    'yes|页面地区：US' || return 1
+    "${FIXTURE_DIR}/youtube/unavailable-china-located.html" \
+    "$not_offered" || return 1
+  # Retired rule: ad-free and the SPunlimited browseId used to prove availability;
+  # both also appear on the not-available page.
+  for fixture in \
+    available-us-google-cn.html \
+    available-us-generic-adfree.html \
+    available-us-premiumlite-browse.html; do
+    evaluate_youtube_fixture "${FIXTURE_DIR}/youtube/${fixture}" "$no_offer" || return 1
+  done
   evaluate_youtube_fixture \
     "${FIXTURE_DIR}/youtube/conflicting-region.html" \
     'yes|' || return 1
   evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/unavailable-conflicting-region.html" \
-    'no|页面地区：未知' || return 1
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/conflicting-signals.html" \
-    'no|页面地区：US' || return 1
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/region-cn.html" \
-    'unknown|页面地区：CN' || return 1
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/unavailable-us.html" \
-    'no|页面地区：US' || return 1
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/region-only.html" \
-    'unknown|页面地区：US' || return 1
-  evaluate_youtube_fixture \
     "${FIXTURE_DIR}/youtube/offer-without-region.html" \
     'yes|' || return 1
+  # Retired rule: the page region used to follow a not-available result; the
+  # region is now shown only next to an offer.
+  for fixture in \
+    unavailable-conflicting-region.html \
+    conflicting-signals.html \
+    unavailable-us.html; do
+    evaluate_youtube_fixture "${FIXTURE_DIR}/youtube/${fixture}" "$not_offered" || return 1
+  done
+  # Retired rule: region-only and button-only pages used to show their region or
+  # a region conflict next to the unknown result.
+  for fixture in \
+    region-cn.html \
+    region-only.html \
+    available-us.html \
+    available-us-flow-offer.html \
+    available-us-student-url.html \
+    available-us-unrelated-country.html \
+    active-go-to-youtube.html \
+    premium-navigation-outside-offer-button.html; do
+    evaluate_youtube_fixture "${FIXTURE_DIR}/youtube/${fixture}" "$no_offer" || return 1
+  done
+
+  for marker in 'premiumPurchaseButtonRenderer' 'lpOfferCardViewModel'; do
+    assert_eq 'yes|' \
+      "$(evaluate_youtube_premium_unlock 200 \
+        'https://www.youtube.com/premium?hl=en' "$marker")" \
+      "YouTube Premium offer structure must be accepted on 2xx: $marker" || return 1
+  done
+  assert_eq 'yes|' \
+    "$(evaluate_youtube_premium_unlock 200 'https://www.youtube.com/premium?hl=en' \
+      'premiumPurchaseButtonRenderer <a href="https://www.google.cn/">google.cn</a>')" \
+    'a google.cn link inside an offer page must not veto it' || return 1
 
   for marker in \
     'premiumPurchaseButton' \
@@ -7468,132 +7727,96 @@ test_youtube_fixtures() {
     '/month' \
     '/月' \
     'ad-free' \
-    '"browseId" : "SPunlimited"'; do
-    assert_eq 'yes|' \
+    '"browseId":"SPunlimited"' \
+    'purchaseButtonOverride' \
+    'Start trial' \
+    'YouTube Premium'; do
+    assert_eq "$no_offer" \
       "$(evaluate_youtube_premium_unlock 200 \
         'https://www.youtube.com/premium?hl=en' "$marker")" \
-      "YouTube Premium marker must be accepted on 2xx: $marker" || return 1
+      "a retired or generic YouTube marker must remain unknown: $marker" || return 1
   done
 
-  for marker in \
-    '"otherKey":"SPunlimited"' \
-    '"browseId":"SPunlimitedX"' \
-    '"browseIdOther":"SPunlimited"'; do
-    assert_eq 'unknown|页面特征不明确' \
-      "$(evaluate_youtube_premium_unlock 200 \
-        'https://www.youtube.com/premium?hl=en' "$marker")" \
-      "an inexact SPunlimited signal must remain unknown: $marker" || return 1
-  done
-
-  local -a positives=(
-    'premiumPurchaseButton'
-    'manageSubscriptionButton'
-    '/month'
-    '/月'
-    'ad-free'
-    '"browseId":"SPunlimited"'
-  )
   local -a negatives=(
     'YouTube Premium is not available in your country'
     'Premium is not available in your country'
     'Premium is not available in your region'
+    'PREMIUM IS NOT AVAILABLE IN YOUR COUNTRY'
   )
-  local index
-  for ((index = 0; index < ${#positives[@]}; index++)); do
-    marker="${positives[$index]}"
-    negative="${negatives[$((index % ${#negatives[@]}))]}"
-    assert_eq 'no|页面地区：未知' \
-      "$(evaluate_youtube_premium_unlock 200 \
-        'https://www.youtube.com/premium?hl=en' "$marker $negative")" \
-      "explicit YouTube unavailability must veto marker $marker" || return 1
+  for negative in "${negatives[@]}"; do
+    for marker in 'premiumPurchaseButtonRenderer' 'lpOfferCardViewModel'; do
+      assert_eq "$not_offered" \
+        "$(evaluate_youtube_premium_unlock 200 \
+          'https://www.youtube.com/premium?hl=en' \
+          "\"INNERTUBE_CONTEXT_GL\":\"US\" $marker $negative")" \
+        "explicit YouTube unavailability must veto $marker: $negative" || return 1
+    done
   done
 
   for status in 302 403 451 500; do
-    assert_eq 'unknown|页面特征不明确' \
+    assert_eq 'unknown|Premium 页面没有打开' \
       "$(evaluate_youtube_premium_unlock "$status" \
-        'https://www.youtube.com/premium?hl=en' 'premiumPurchaseButton')" \
-      "YouTube HTTP $status must not accept a positive marker" || return 1
+        'https://www.youtube.com/premium?hl=en' 'premiumPurchaseButtonRenderer')" \
+      "YouTube HTTP $status must not accept an offer" || return 1
   done
-  assert_eq 'no|页面地区：未知' \
+  # Retired rule: the not-available notice used to veto a non-2xx page too.
+  assert_eq 'unknown|Premium 页面没有打开' \
     "$(evaluate_youtube_premium_unlock 500 \
       'https://www.youtube.com/premium?hl=en' \
-      'Premium is not available in your country ad-free')" \
-    'explicit YouTube unavailability must also veto a non-2xx page' || return 1
+      'Premium is not available in your country')" \
+    'a non-2xx page must stay unknown even with the notice' || return 1
 
   for final_url in \
     'https://google.cn/' \
     'https://www.google.cn/premium' \
-    'https://accounts.google.cn/path'; do
-    assert_eq 'no|页面地区：未知' \
-      "$(evaluate_youtube_premium_unlock 200 "$final_url" 'ad-free')" \
-      "a final google.cn host must veto a positive marker: $final_url" || return 1
+    'https://accounts.google.cn/path' \
+    'https://WWW.Google.CN/'; do
+    assert_eq 'no|跳转到 google.cn' \
+      "$(evaluate_youtube_premium_unlock 200 "$final_url" 'premiumPurchaseButtonRenderer')" \
+      "a final google.cn host must veto an offer: $final_url" || return 1
   done
+  assert_eq 'no|跳转到 google.cn' \
+    "$(evaluate_youtube_premium_unlock 404 'https://www.google.cn/' '')" \
+    'a final google.cn host must decide before the HTTP status' || return 1
   for final_url in \
     'https://google.cn.evil.invalid/' \
     'https://evilgoogle.cn.invalid/'; do
     assert_eq 'yes|' \
-      "$(evaluate_youtube_premium_unlock 200 "$final_url" 'ad-free')" \
+      "$(evaluate_youtube_premium_unlock 200 "$final_url" 'premiumPurchaseButtonRenderer')" \
       "a google.cn lookalike host must not trigger the redirect veto: $final_url" || return 1
   done
-
-  for fixture in \
-    available-us.html \
-    available-us-flow-offer.html \
-    available-us-student-url.html \
-    active-go-to-youtube.html \
-    premium-navigation-outside-offer-button.html; do
-    evaluate_youtube_fixture \
-      "${FIXTURE_DIR}/youtube/${fixture}" \
-      'unknown|页面地区：US' || return 1
+  for final_url in \
+    'https://consent.youtube.com/m?continue=https://www.youtube.com/premium' \
+    'https://accounts.google.com/ServiceLogin' \
+    'https://Consent.YouTube.com/'; do
+    assert_eq 'unknown|同意或登录页面' \
+      "$(evaluate_youtube_premium_unlock 200 "$final_url" 'premiumPurchaseButtonRenderer')" \
+      "a consent or sign-in page must remain unknown: $final_url" || return 1
   done
-  evaluate_youtube_fixture \
-    "${FIXTURE_DIR}/youtube/available-us-unrelated-country.html" \
-    'unknown|页面地区信息冲突' || return 1
 
-  for marker in \
-    'purchaseButtonOverride' \
-    'Start trial'; do
-    assert_eq 'unknown|页面特征不明确' \
-      "$(evaluate_youtube_premium_unlock 200 \
-        'https://www.youtube.com/premium?hl=en' "$marker")" \
-      "an obsolete broad YouTube marker must remain unknown: $marker" || return 1
-  done
   for region_body in \
+    '"INNERTUBE_CONTEXT_GL":"US"' \
+    '"contentRegion":"US"' \
     '"GL":"US"' \
     '"countryCode":"US"' \
     '"country_code":"US"' \
     '"locationCountryCode":"US"' \
     '<span id="country-code">US</span>'; do
-    assert_eq 'unknown|页面地区：US' \
+    assert_eq 'yes|页面地区：US' \
+      "$(evaluate_youtube_premium_unlock 200 \
+        'https://www.youtube.com/premium?hl=en' "$region_body premiumPurchaseButtonRenderer")" \
+      "an offer page must show its unique region: $region_body" || return 1
+    assert_eq "$no_offer" \
       "$(evaluate_youtube_premium_unlock 200 \
         'https://www.youtube.com/premium?hl=en' "$region_body")" \
-      "YouTube region signal must be display-only: $region_body" || return 1
+      "a region alone must not prove or be shown: $region_body" || return 1
   done
-  assert_eq 'unknown|页面地区信息冲突' \
-    "$(evaluate_youtube_premium_unlock 200 \
-      'https://www.youtube.com/premium?hl=en' \
-      '"INNERTUBE_CONTEXT_GL":"US","INNERTUBE_CONTEXT_GL":"CN"')" \
-    'conflicting region-only YouTube signals must remain unknown' || return 1
-  assert_eq 'unknown|页面地区信息冲突' \
-    "$(evaluate_youtube_premium_unlock 200 \
-      'https://www.youtube.com/premium?hl=en' \
-      '"INNERTUBE_CONTEXT_GL":"US","contentRegion":"CA"')" \
-    'conflicting YouTube regions across different keys must remain unknown' || return 1
   assert_eq 'yes|' \
     "$(evaluate_youtube_premium_unlock 200 \
       'https://www.youtube.com/premium?hl=en' \
-      '"INNERTUBE_CONTEXT_GL":"US","contentRegion":"CA",ad-free')" \
-    'a positive marker may pass a cross-key region conflict without displaying a false region' || return 1
-  assert_eq 'no|页面地区：未知' \
-    "$(evaluate_youtube_premium_unlock 200 \
-      'https://www.youtube.com/premium?hl=en' \
-      '"INNERTUBE_CONTEXT_GL":"US","contentRegion":"CA",Premium is not available in your country')" \
-    'an explicit negative must veto a cross-key region conflict and keep the page region unknown' || return 1
-  assert_eq 'unknown|页面特征不明确' \
-    "$(evaluate_youtube_premium_unlock 200 \
-      'https://www.youtube.com/premium?hl=en' 'YouTube Premium')" \
-    'a generic YouTube Premium title must not count as an unlock signal' || return 1
-  assert_eq 'unknown|页面特征不明确' \
+      '"INNERTUBE_CONTEXT_GL":"US","contentRegion":"CA",lpOfferCardViewModel')" \
+    'an offer page with conflicting regions must not display a false region' || return 1
+  assert_eq 'unknown|Premium 页面没有打开' \
     "$(evaluate_youtube_premium_unlock 200 \
       'https://www.youtube.com/premium?hl=en' '')" \
     'an empty successful YouTube page must be distinct from a transport failure' || return 1
@@ -7671,7 +7894,10 @@ test_native_unlock_trace_behavior() {
         ;;
       *gemini.google.com*)
         unlock_response_fixture 200 'https://gemini.google.com/' \
-          "$(cat "${FIXTURE_DIR}/gemini/available.html")"
+          "$(cat "${FIXTURE_DIR}/gemini/current-usa.html")"
+        ;;
+      'GET https://notebooklm.google.com/  redirect')
+        printf '301\thttps://notebook.google.com/'
         ;;
       *youtube.com/premium*)
         unlock_response_fixture 200 'https://www.youtube.com/premium?hl=en' \
@@ -7689,12 +7915,14 @@ test_native_unlock_trace_behavior() {
   assert_contains "$output" '203.0.113.8' 'native trace output must show the observed public IP' || return 1
   assert_contains "$output" 'US' 'native trace output must show the observed Cloudflare region' || return 1
   assert_contains "$output" 'Gemini：可用' \
-    'native Gemini output must reuse the homepage marker parser' || return 1
-  assert_contains "$output" 'YouTube Premium：不可用（页面地区：US）' \
-    'native YouTube output must reuse the existing parser and parsed region' || return 1
+    'native Gemini output must reuse the shared page and verdict evaluator' || return 1
+  assert_contains "$output" 'YouTube Premium：不可用（页面提示所在地区不提供 Premium）' \
+    'native YouTube output must reuse the shared parser without the fallback region' || return 1
   assert_contains "$calls" 'gemini.google.com' 'the native check must request Gemini through the native transport' || return 1
   assert_eq '1' "$(grep -Fc 'gemini.google.com' <<< "$calls")" \
     'the native check must accept the first Gemini HTTP response' || return 1
+  assert_eq '1' "$(grep -Fxc 'GET https://notebooklm.google.com/  redirect' <<< "$calls")" \
+    'the native check must ask for the location verdict once without following it' || return 1
   assert_not_contains "$calls" 'K4WWud' \
     'the native check must not request the Gemini location RPC' || return 1
   assert_contains "$calls" 'youtube.com/premium' 'the native check must request YouTube through the native transport' || return 1
@@ -7724,6 +7952,8 @@ test_native_unlock_trace_behavior() {
     calls="$(< "$request_log")"
     assert_not_contains "$calls" 'gemini.google.com' \
       "warp=$trace_state must stop before Gemini because the bypass failed" || return 1
+    assert_not_contains "$calls" 'notebooklm.google.com' \
+      "warp=$trace_state must stop before the Gemini verdict because the bypass failed" || return 1
     assert_not_contains "$calls" 'youtube.com/premium' \
       "warp=$trace_state must stop before YouTube because the bypass failed" || return 1
     assert_contains "$output" '旁路失败' \
@@ -7760,6 +7990,8 @@ test_native_https_request_mode_and_environment_contract() {
     } >> "$transport_log"
     if [ "${20-}" = unlock ]; then
       unlock_response_fixture "$mock_status" "$mock_url" "$mock_body"
+    elif [ "${20-}" = redirect ]; then
+      printf '302\t%s' "$mock_url"
     else
       printf 'native-body\n'
     fi
@@ -7812,6 +8044,20 @@ test_native_https_request_mode_and_environment_contract() {
     'request|GET|https://example.invalid/v6||6|2001:db8:1::10||0|socks|991|992|3|7' \
     'Socks mode must pass the exempt uid/gid without a WireGuard interface or mark' || return 1
 
+  : > "$transport_log"
+  output="$(native_unlock_redirect 'https://example.invalid/verdict')" || {
+    fail 'the native verdict wrapper must return the first response'
+    return 1
+  }
+  assert_eq "302"$'\t'"$mock_url" "$output" \
+    'the native verdict wrapper must return the first status and redirect target' || return 1
+  recorded="$(< "$transport_log")"
+  assert_contains "$recorded" 'output-mode|redirect' \
+    'native verdict requests must explicitly select the no-follow redirect mode' || return 1
+  assert_contains "$recorded" \
+    'request|GET|https://example.invalid/verdict||6|2001:db8:1::10||0|socks|991|992|3|7' \
+    'native verdict requests must use the same native path as the page' || return 1
+
   assert_eq 'http://lower-http.invalid:8080' "$http_proxy" \
     'ignoring proxy variables for one request must not mutate the caller environment' || return 1
   assert_eq 'http://upper-http.invalid:8080' "$HTTP_PROXY" \
@@ -7820,6 +8066,7 @@ test_native_https_request_mode_and_environment_contract() {
 
 test_native_https_request_socket_redirect_and_deadline_contract() {
   local body drop_line resolve_line socket_line bind_line connect_line tls_line
+  local redirect_mode_line follow_line
   body="$(function_body "$MANAGER_SCRIPT" native_https_request)"
   [ -n "$body" ] || {
     fail 'could not extract native_https_request'
@@ -7875,6 +8122,19 @@ test_native_https_request_socket_redirect_and_deadline_contract() {
     '301/302/303 redirects must convert POST to GET without changing 307/308 semantics' || return 1
   assert_contains "$body" 'if output_mode == "unlock":' \
     'native unlock mode must preserve the terminal HTTP response' || return 1
+  assert_contains "$body" 'output_mode not in ("body", "unlock", "redirect")' \
+    'native HTTPS must accept only its three output modes' || return 1
+  redirect_mode_line="$(line_number "$body" 'if output_mode == "redirect":')"
+  follow_line="$(line_number "$body" 'if redirect_count == 5:')"
+  if [ -z "$redirect_mode_line" ] || [ -z "$follow_line" ] \
+    || [ "$redirect_mode_line" -ge "$follow_line" ]; then
+    fail 'native redirect mode must report the first response before any redirect is followed'
+    return 1
+  fi
+  assert_contains "$body" 'target = urllib.parse.urljoin(current_url, location) if location else ""' \
+    'native redirect mode must report an absolute target, or none without a Location' || return 1
+  assert_contains "$body" 'sys.stdout.buffer.write(f"{status}\t{target}".encode("utf-8"))' \
+    'native redirect mode must print the status and target like the curl helper' || return 1
   assert_contains "$body" 'metadata = f"{status}\t{current_url}\n"' \
     'native canonical responses must include status and final effective URL' || return 1
   assert_contains "$body" 'metadata + response_body' \
@@ -11967,6 +12227,7 @@ run_test 'unlock probes accept the first successful HTTP response' test_unlock_p
 run_test 'unlock probes retry only transport failures once' test_unlock_transport_retries_only_transport_failures_once
 run_test 'all unlock entrypoints share the current detector' test_all_unlock_entrypoints_share_current_logic
 run_test 'unlock HTTP requests ignore environment proxies' test_unlock_http_transport_ignores_environment_proxies
+run_test 'unlock verdict requests report only the first response' test_unlock_redirect_request_reports_the_first_response
 run_test 'HTTP probes ignore user curlrc cookies output and fail settings' test_http_probes_ignore_user_curl_config
 run_test 'unlock advisory and strict exits preserve the all-services aggregate' test_unlock_check_requires_both_services
 run_test 'unlock policy stays local and reports each service' test_unlock_policy_is_local_and_each_service_is_still_reported
