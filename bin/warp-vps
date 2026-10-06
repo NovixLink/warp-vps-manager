@@ -2569,7 +2569,7 @@ output_mode = sys.argv[14]
 if (
     method not in ("GET", "POST")
     or family_number not in (4, 6)
-    or output_mode not in ("body", "unlock")
+    or output_mode not in ("body", "unlock", "redirect")
 ):
     raise SystemExit(1)
 family = socket.AF_INET if family_number == 4 else socket.AF_INET6
@@ -2675,6 +2675,13 @@ for redirect_count in range(6):
         connection.close()
     if len(response_body) > max_response_bytes:
         raise SystemExit(1)
+    if output_mode == "redirect":
+        # Report the first response without following it, like curl %{redirect_url}.
+        target = current_url
+        if status in (301, 302, 303, 307, 308):
+            target = urllib.parse.urljoin(current_url, location) if location else ""
+        sys.stdout.buffer.write(f"{status}\t{target}".encode("utf-8"))
+        raise SystemExit(0)
     if status in (301, 302, 303, 307, 308) and location:
         if redirect_count == 5:
             raise SystemExit(1)
@@ -2927,8 +2934,40 @@ curl_unlock_page() {
   printf '%s\t%s\n%s' "$status" "$final_url" "$body"
 }
 
+curl_unlock_redirect() {
+  local url="$1"
+  local metadata status
+
+  if ! metadata="$(
+    http_proxy='' https_proxy='' all_proxy='' HTTP_PROXY='' HTTPS_PROXY='' ALL_PROXY='' \
+      curl -q -4 --noproxy '*' -sS -o /dev/null \
+      --connect-timeout "$UNLOCK_CONNECT_TIMEOUT" --max-time "$UNLOCK_MAX_TIME" \
+      -A "$UNLOCK_TEST_UA" \
+      -H 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' \
+      -H 'accept-language: en-US,en;q=0.9' \
+      -H 'cache-control: no-cache' \
+      -H 'pragma: no-cache' \
+      --write-out $'%{http_code}\t%{redirect_url}' \
+      "$url" 2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  status="${metadata%%$'\t'*}"
+  case "$status" in
+    [0-9][0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  [ "$status" != "$metadata" ] || return 1
+  printf '%s' "$metadata"
+}
+
 native_unlock_page() {
   native_https_request GET "$1" '' unlock
+}
+
+native_unlock_redirect() {
+  native_https_request GET "$1" '' redirect
 }
 
 request_unlock_response() {
@@ -2969,20 +3008,15 @@ parse_unlock_response() {
   UNLOCK_RESPONSE_BODY="$body"
 }
 
-unlock_url_host_is_google_cn() {
+unlock_url_host() {
   local url="$1"
-  local authority host
+  local authority
 
   authority="${url#*://}"
-  [ "$authority" != "$url" ] || return 1
+  [ "$authority" != "$url" ] || return 0
   authority="${authority%%[/?#]*}"
   authority="${authority##*@}"
-  host="${authority%%:*}"
-  host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
-  case "$host" in
-    google.cn|*.google.cn) return 0 ;;
-    *) return 1 ;;
-  esac
+  printf '%s' "${authority%%:*}" | tr '[:upper:]' '[:lower:]'
 }
 
 unlock_url_is_google_sorry() {
@@ -3043,14 +3077,10 @@ raise SystemExit(1)
 youtube_has_unlock_signal() {
   local body="$1"
 
-  # UnlockTests v0.0.48 supplies the button and monthly markers;
-  # RegionRestrictionCheck supplies ad-free; Clash Verge supplies SPunlimited.
-  grep -Fqi 'premiumPurchaseButton' <<< "$body" \
-    || grep -Fqi 'manageSubscriptionButton' <<< "$body" \
-    || grep -Fqi '/month' <<< "$body" \
-    || grep -Fq '/月' <<< "$body" \
-    || grep -Fqi 'ad-free' <<< "$body" \
-    || grep -Eqi '"browseId"[[:space:]]*:[[:space:]]*"SPunlimited"' <<< "$body"
+  # Only pages where Premium is sold carry the purchase button and offer cards;
+  # ad-free and SPunlimited also appear on the not-available page.
+  grep -Fq 'premiumPurchaseButtonRenderer' <<< "$body" \
+    || grep -Fq 'lpOfferCardViewModel' <<< "$body"
 }
 
 youtube_has_unavailable_signal() {
@@ -3070,44 +3100,9 @@ extract_gemini_regions() {
     || true
 }
 
-extract_gemini_region() {
-  local body="$1"
-  local regions count
-
-  regions="$(extract_gemini_regions "$body")"
-  [ -n "$regions" ] || return 1
-  count="$(awk 'END { print NR }' <<< "$regions")"
-  [ "$count" -eq 1 ] || return 2
-  printf '%s\n' "$regions"
-}
-
 gemini_region_is_blocked() {
   case "$1" in
     AFG|CHN|RUS|BLR|CUB|IRN|PRK|SYR) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-gemini_region_is_supported() {
-  # UnlockTests v0.0.48 GeminiSupportCountry converted to alpha-3, with HKG/MAC
-  # added from Google's current Web support list. AFG is intentionally absent.
-  case "$1" in
-    ALA|ALB|DZA|ASM|AND|AGO|AIA|ATA|ATG|ARG|ARM|ABW|AUS|AUT|AZE) return 0 ;;
-    BHR|BGD|BRB|BEL|BLZ|BEN|BMU|BTN|BOL|BIH|BWA|BRA|IOT|VGB|BRN) return 0 ;;
-    BGR|BFA|BDI|CPV|KHM|CMR|CAN|BES|CYM|CAF|TCD|CHL|CXR|CCK|COL) return 0 ;;
-    COM|COK|CRI|CIV|HRV|CUW|CZE|COD|DNK|DJI|DMA|DOM|ECU|EGY|SLV) return 0 ;;
-    GNQ|ERI|EST|SWZ|ETH|FLK|FRO|FJI|FIN|FRA|GUF|PYF|ATF|GAB|GEO) return 0 ;;
-    DEU|GHA|GIB|GRC|GRL|GRD|GLP|GUM|GTM|GGY|GIN|GNB|GUY|HTI|HMD) return 0 ;;
-    HND|HUN|ISL|IND|IDN|IRQ|IRL|IMN|ISR|ITA|JAM|JPN|JEY|JOR|KAZ) return 0 ;;
-    KEN|KIR|XKS|KWT|KGZ|LAO|LVA|LBN|LSO|LBR|LBY|LIE|LTU|LUX|MDG) return 0 ;;
-    MWI|MYS|MDV|MLI|MLT|MHL|MTQ|MRT|MUS|MYT|MEX|FSM|MDA|MCO|MNG) return 0 ;;
-    MNE|MSR|MAR|MOZ|MMR|NAM|NRU|NPL|NLD|NCL|NZL|NIC|NER|NGA|NIU) return 0 ;;
-    NFK|MKD|MNP|NOR|OMN|PAK|PLW|PSE|PAN|PNG|PRY|PER|PHL|PCN|POL) return 0 ;;
-    PRT|PRI|QAT|CYP|COG|REU|ROU|RWA|BLM|SHN|KNA|LCA|MAF|SPM|VCT) return 0 ;;
-    WSM|SMR|STP|SAU|SEN|SRB|SYC|SLE|SGP|SXM|SVK|SVN|SLB|SOM|ZAF) return 0 ;;
-    SGS|KOR|SSD|ESP|LKA|SDN|SUR|SJM|SWE|CHE|TWN|TJK|TZA|THA|BHS) return 0 ;;
-    GMB|TLS|TGO|TKL|TON|TTO|TUN|TUR|TKM|TCA|TUV|VIR|UGA|UKR|ARE) return 0 ;;
-    GBR|USA|UMI|URY|UZB|VUT|VAT|VEN|VNM|WLF|ESH|YEM|ZMB|ZWE|HKG|MAC) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -3129,11 +3124,11 @@ evaluate_gemini_unlock() {
   local http_status="$1"
   local final_url="$2"
   local body="$3"
+  local verdict_status="${4-}"
+  local verdict_target="${5-}"
   local available=0
   local unavailable=0
-  local region=""
-  local blocked_region=""
-  local region_status=0
+  local verdict_redirect=0
 
   case "$http_status" in
     [0-9][0-9][0-9]) ;;
@@ -3150,18 +3145,35 @@ evaluate_gemini_unlock() {
 
   case "$http_status" in
     403|451)
-      printf 'no|\n'
+      printf 'no|HTTP %s\n' "$http_status"
       return 0
       ;;
     2[0-9][0-9]) ;;
     *)
-      printf 'unknown|页面特征不明确\n'
+      printf 'unknown|Gemini 页面没有打开\n'
       return 0
       ;;
   esac
 
   if [ -z "$body" ]; then
-    printf 'unknown|页面特征不明确\n'
+    printf 'unknown|Gemini 页面没有打开\n'
+    return 0
+  fi
+
+  # A China-located VPS once showed CHN with the old marker set and Gemini
+  # still unusable, so a blocked page region outranks every other signal.
+  if extract_gemini_blocked_region "$body" >/dev/null 2>&1; then
+    printf 'no|地区受限\n'
+    return 0
+  fi
+
+  # Google serves the same Gemini page everywhere; its own location verdict is
+  # NotebookLM's first redirect, requested through the same path as the page.
+  case "$verdict_status" in
+    301|302|303|307|308) verdict_redirect=1 ;;
+  esac
+  if [ "$verdict_redirect" -eq 1 ] && [[ "$verdict_target" == *location=unsupported* ]]; then
+    printf 'no|Google 判定所在地区不支持\n'
     return 0
   fi
 
@@ -3174,61 +3186,40 @@ evaluate_gemini_unlock() {
     unavailable=1
   fi
 
-  if region="$(extract_gemini_region "$body" 2>/dev/null)"; then
-    :
-  else
-    region_status=$?
-  fi
-
-  blocked_region="$(extract_gemini_blocked_region "$body" 2>/dev/null || true)"
-  if [ -n "$blocked_region" ]; then
-    if [ "$region_status" -ne 2 ] && [ "$available" -eq 1 ] && [ "$unavailable" -eq 0 ]; then
-      printf 'yes|\n'
-    else
-      printf 'no|\n'
-    fi
+  if [ "$unavailable" -eq 1 ] && [ "$available" -eq 0 ]; then
+    printf 'no|页面标记为不可用\n'
     return 0
   fi
 
-  if [ "$region_status" -eq 2 ]; then
-    printf 'unknown|地区信息冲突\n'
-    return 0
-  fi
-
-  if [ -n "$region" ] && gemini_region_is_supported "$region"; then
-    printf 'yes|\n'
-    return 0
-  fi
-
-  if [ -n "$region" ]; then
-    printf 'unknown|页面特征不明确\n'
-    return 0
-  fi
-
-  if [ "$available" -eq 1 ] && [ "$unavailable" -eq 1 ]; then
-    printf 'unknown|页面特征冲突\n'
-    return 0
-  fi
   if [ "$available" -eq 1 ]; then
     printf 'yes|\n'
     return 0
   fi
 
-  if [ "$unavailable" -eq 1 ]; then
-    printf 'unknown|页面标记不能确认是否可用\n'
-    return 0
+  if [ "$verdict_redirect" -eq 1 ]; then
+    case "$(unlock_url_host "$verdict_target")" in
+      notebook.google.com|notebooklm.google.com)
+        printf 'yes|\n'
+        return 0
+        ;;
+    esac
   fi
 
-  printf 'unknown|页面特征不明确\n'
+  printf 'unknown|Google 地区判定没有响应\n'
 }
 
 probe_gemini_unlock() {
-  local response=""
+  local response="" verdict="" verdict_status="" verdict_target=""
 
   if response="$(request_unlock_response curl_unlock_page "https://gemini.google.com/")" \
     && parse_unlock_response "$response"; then
+    if verdict="$(request_unlock_response curl_unlock_redirect "https://notebooklm.google.com/")"; then
+      verdict_status="${verdict%%$'\t'*}"
+      verdict_target="${verdict#*$'\t'}"
+    fi
     evaluate_gemini_unlock \
-      "$UNLOCK_RESPONSE_STATUS" "$UNLOCK_RESPONSE_FINAL_URL" "$UNLOCK_RESPONSE_BODY"
+      "$UNLOCK_RESPONSE_STATUS" "$UNLOCK_RESPONSE_FINAL_URL" "$UNLOCK_RESPONSE_BODY" \
+      "$verdict_status" "$verdict_target"
   else
     evaluate_gemini_unlock '' '' ''
   fi
@@ -3239,7 +3230,6 @@ evaluate_youtube_premium_unlock() {
   local final_url="$2"
   local body="$3"
   local region=""
-  local region_status=0
 
   case "$http_status" in
     [0-9][0-9][0-9]) ;;
@@ -3249,45 +3239,39 @@ evaluate_youtube_premium_unlock() {
       ;;
   esac
 
-  if region="$(extract_youtube_region "$body" 2>/dev/null)"; then
-    :
-  else
-    region_status=$?
-  fi
-
-  if unlock_url_host_is_google_cn "$final_url"; then
-    if [ -n "$region" ]; then
-      printf 'no|页面地区：%s\n' "$region"
-    else
-      printf 'no|页面地区：未知\n'
-    fi
-    return 0
-  fi
-
-  if youtube_has_unavailable_signal "$body"; then
-    if [ -n "$region" ]; then
-      printf 'no|页面地区：%s\n' "$region"
-    else
-      printf 'no|页面地区：未知\n'
-    fi
-    return 0
-  fi
+  case "$(unlock_url_host "$final_url")" in
+    google.cn|*.google.cn)
+      printf 'no|跳转到 google.cn\n'
+      return 0
+      ;;
+    consent.youtube.com|accounts.google.com)
+      printf 'unknown|同意或登录页面\n'
+      return 0
+      ;;
+  esac
 
   case "$http_status" in
     2[0-9][0-9]) ;;
     *)
-      printf 'unknown|页面特征不明确\n'
+      printf 'unknown|Premium 页面没有打开\n'
       return 0
       ;;
   esac
 
   if [ -z "$body" ]; then
-    printf 'unknown|页面特征不明确\n'
+    printf 'unknown|Premium 页面没有打开\n'
+    return 0
+  fi
+
+  if youtube_has_unavailable_signal "$body"; then
+    printf 'no|页面提示所在地区不提供 Premium\n'
     return 0
   fi
 
   if youtube_has_unlock_signal "$body"; then
-    if [ -n "$region" ]; then
+    # YouTube falls back to a US content region where Premium is not sold,
+    # so the page region is shown only next to an offer.
+    if region="$(extract_youtube_region "$body" 2>/dev/null)"; then
       printf 'yes|页面地区：%s\n' "$region"
     else
       printf 'yes|\n'
@@ -3295,17 +3279,7 @@ evaluate_youtube_premium_unlock() {
     return 0
   fi
 
-  if [ "$region_status" -eq 2 ]; then
-    printf 'unknown|页面地区信息冲突\n'
-    return 0
-  fi
-
-  if [ -n "$region" ]; then
-    printf 'unknown|页面地区：%s\n' "$region"
-    return 0
-  fi
-
-  printf 'unknown|页面特征不明确\n'
+  printf 'unknown|页面没有购买选项也没有不可用提示\n'
 }
 
 probe_youtube_premium_unlock() {
@@ -3321,12 +3295,17 @@ probe_youtube_premium_unlock() {
 }
 
 probe_native_gemini_unlock() {
-  local response=""
+  local response="" verdict="" verdict_status="" verdict_target=""
 
   if response="$(request_unlock_response native_unlock_page "https://gemini.google.com/")" \
     && parse_unlock_response "$response"; then
+    if verdict="$(request_unlock_response native_unlock_redirect "https://notebooklm.google.com/")"; then
+      verdict_status="${verdict%%$'\t'*}"
+      verdict_target="${verdict#*$'\t'}"
+    fi
     evaluate_gemini_unlock \
-      "$UNLOCK_RESPONSE_STATUS" "$UNLOCK_RESPONSE_FINAL_URL" "$UNLOCK_RESPONSE_BODY"
+      "$UNLOCK_RESPONSE_STATUS" "$UNLOCK_RESPONSE_FINAL_URL" "$UNLOCK_RESPONSE_BODY" \
+      "$verdict_status" "$verdict_target"
   else
     evaluate_gemini_unlock '' '' ''
   fi
