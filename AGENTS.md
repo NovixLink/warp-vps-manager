@@ -1,6 +1,22 @@
-# WARP VPS Manager 项目协作
+# WARP VPS Manager
 
 本项目提供Google精准分流、全局WARP及WireGuard/Socks5管理。
+
+## 运行与检查
+
+- 安装（用户侧）和管理命令见 [README](README.md)。
+- 按改动范围选择已有检查；完整发布检查为：
+
+```bash
+bash -n install.sh
+bash -n bin/warp-vps
+shellcheck install.sh bin/warp-vps tests/*.sh
+bash tests/run.sh
+python3 -m py_compile scripts/generate-google-rules.py
+git diff --check
+```
+
+- 安装包初始快照用 `python3 scripts/generate-google-rules.py --output rules` 重新生成，再 `git diff -- rules` 查看；该命令获取官方数据并修改`rules/`，只在实际规则维护范围内执行。VPS日常规则更新不要求重新发布安装包。发布前核对README安装命令及实际行为。
 
 ## 核心约束
 
@@ -11,18 +27,19 @@
 - 解锁判断使用实际地区及正负页面特征，不复制第三方Cookie或用普通HTTP成功代替可用性；保留现有“无法确认”等正常结果。
 - 维护现有Bash/ShellCheck、回归和规则生成检查，实机结论限定到实际系统、架构与模式。安装/更新只选择明确运行文件，不复制仓库根、cowork或localwork。
 
-## 协作与交付
+## 做什么读什么
 
-- 当前请求决定范围和输出位置，已有授权在本次任务内持续。查询、提取和回复草稿按请求交付，不自动生成报告或落盘记录。
-- 基于当前实现与适用契约做最小修改，复用已有能力，不臆测接口，不增加未经要求的依赖或状态；保留现有合理容错。
-- 区分只读、原样复用、无操作与真实写入。写入门禁只保护相应动作，不阻断合法读取或无操作。
-- 验证匹配实际改动，不削弱检查；区分本地、模拟、测试环境与生产证据。只有实际修改仓库文件时，才审查diff、工作区、分支和远端，并按项目流程提交推送，不夹带无关改动。
-- 本机文件需删除时使用系统安全回收，保留登录态、凭据、运行数据、未核实材料和唯一交付物。磁盘空间评估与可重建缓存整理仅由独立明确的清理任务处理，普通任务不附带磁盘治理。
+| 任务 | 读 |
+|---|---|
+| 安装、模式、路由、命令、规则更新、卸载 | [README](README.md) |
+| 安装与已有安装入口 | `install.sh` |
+| 管理命令、状态、数据面、生命周期、解锁检测 | `bin/warp-vps` |
+| 规则生成与初始快照 | `scripts/generate-google-rules.py`、`rules/` |
+| 回归与 Linux 网络验证 | `tests/run.sh`、`.github/workflows/ci.yml` |
+| 进度、决定、踩坑、实机验证记录 | `cowork/`，先读 `cowork/AGENTS.md` |
 
 ## 资料入口
 
-- 维护者内部资料（背景、规则、待办、技术文档与错误记录）在私有仓库 `NovixLink/warp-vps-manager-internal`。有权限时在本仓库根目录执行 `gh repo clone NovixLink/warp-vps-manager-internal cowork`；`cowork/` 已被忽略，不进入公开仓库。
-- 存在 `cowork/AGENTS.md` 时先读取它，再按任务选择其中资料。
-- 无权限或尚未克隆时只按本文件和 README 工作；不在公开仓库新建 cowork 或提交内部资料，需要交接记录时先联系维护者。
-- 本仓库只提交公开源码、测试、规则和使用说明；内部链接与内部规则只写在 cowork。
-- `localwork/`仅保存个人本机备注与证据索引，不覆盖团队规则，不进入Git或发布产物；没有本机资料时保持空目录。
+- 维护者内部资料在私有仓库 `NovixLink/warp-vps-manager-internal`。有权限时在本仓库根目录执行 `gh repo clone NovixLink/warp-vps-manager-internal cowork`；`cowork/` 已被忽略，不进入公开仓库。存在 `cowork/AGENTS.md` 时先读它。
+- 无权限或尚未克隆时只按本文件和 README 工作；不在公开仓库新建 cowork 或提交内部资料。
+- 本仓库只提交公开源码、测试、规则和使用说明；内部链接与内部规则只写在 cowork。`localwork/` 只放个人本机备注，不进入Git或发布产物。
